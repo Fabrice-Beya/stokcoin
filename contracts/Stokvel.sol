@@ -3,7 +3,7 @@ pragma solidity ^0.4.16;
 contract owned {
     address public owner;
 
-    function owned() {
+    function owned() public {
         owner = msg.sender;
     }
 
@@ -12,7 +12,7 @@ contract owned {
         _;
     }
 
-    function transferOwnership(address newOwner) onlyOwner {
+    function transferOwnership(address newOwner) onlyOwner public {
         owner = newOwner;
     }
 }
@@ -21,61 +21,59 @@ contract tokenRecipient {
     event receivedEther(address sender, uint amount);
     event receivedTokens(address _from, uint256 _value, address _token, bytes _extraData);
 
-    function receiveApproval(address _from, uint256 _value, address _token, bytes _extraData){
+    function receiveApproval(address _from, uint256 _value, address _token, bytes _extraData) public {
         Token t = Token(_token);
         require(t.transferFrom(_from, this, _value));
         receivedTokens(_from, _value, _token, _extraData);
     }
 
-    function () payable {
+    function () payable public {
         receivedEther(msg.sender, msg.value);
     }
 }
 
-interface Token {
-    function transferFrom(address _from, address _to, uint256 _value) returns (bool success);
+contract Token {
+    mapping (address => uint256) public balanceOf;
+    function transferFrom(address _from, address _to, uint256 _value) public returns (bool success);
 }
 
-contract StokVel is owned, tokenRecipient {
+/**
+ * The shareholder association contract itself
+ */
+contract Association is owned, tokenRecipient {
 
+    uint public minimumQuorum;
+    uint public debatingPeriodInMinutes;
     Proposal[] public proposals;
     uint public numProposals;
-    mapping (address => uint) public memberId;
-    Member[] public members;
-    uint minimumTime = 10;
+    Token public sharesTokenAddress;
 
     event ProposalAdded(uint proposalID, address recipient, uint amount, string description);
-    event Voted(uint proposalID, bool position, address voter, string justification);
-    event ProposalExecuted(uint proposalID, int result, uint deadline);
-    event MembershipChanged(address member, bool isMember);
+    event Voted(uint proposalID, bool position, address voter);
+    event ProposalTallied(uint proposalID, uint result, uint quorum, bool active);
+    event ChangeOfRules(uint newMinimumQuorum, uint newDebatingPeriodInMinutes, address newSharesTokenAddress);
 
     struct Proposal {
         address recipient;
         uint amount;
         string description;
+        uint minExecutionDate;
         bool executed;
-        int currentResult;
+        bool proposalPassed;
+        uint numberOfVotes;
         bytes32 proposalHash;
-        uint creationDate;
         Vote[] votes;
         mapping (address => bool) voted;
-    }
-
-    struct Member {
-        address member;
-        string name;
-        uint memberSince;
     }
 
     struct Vote {
         bool inSupport;
         address voter;
-        string justification;
     }
 
     // Modifier that allows only shareholders to vote and create new proposals
-    modifier onlyMembers {
-        require(memberId[msg.sender] != 0);
+    modifier onlyShareholders {
+        require(sharesTokenAddress.balanceOf(msg.sender) > 0);
         _;
     }
 
@@ -84,63 +82,26 @@ contract StokVel is owned, tokenRecipient {
      *
      * First time setup
      */
-    function TimeLockMultisig(address founder, address[] initialMembers, uint minimumAmountOfMinutes) payable {
-        if (founder != 0) owner = founder;
-        if (minimumAmountOfMinutes !=0) minimumTime = minimumAmountOfMinutes;
-        // It’s necessary to add an empty first member
-        addMember(0, '');
-        // and let's add the founder, to save a step later
-        addMember(owner, 'founder');
-        changeMembers(initialMembers, true);
+    function Association(Token sharesAddress, uint minimumSharesToPassAVote, uint minutesForDebate) payable public {
+        changeVotingRules(sharesAddress, minimumSharesToPassAVote, minutesForDebate);
     }
 
     /**
-     * Add member
+     * Change voting rules
      *
-     * @param targetMember address to add as a member
-     * @param memberName label to give this member address
-     */
-    function addMember(address targetMember, string memberName) onlyOwner {
-        uint id;
-        if (memberId[targetMember] == 0) {
-            memberId[targetMember] = members.length;
-            id = members.length++;
-        } else {
-            id = memberId[targetMember];
-        }
-
-        members[id] = Member({member: targetMember, memberSince: now, name: memberName});
-        MembershipChanged(targetMember, true);
-    }
-
-    /**
-     * Remove member
+     * Make so that proposals need to be discussed for at least `minutesForDebate/60` hours
+     * and all voters combined must own more than `minimumSharesToPassAVote` shares of token `sharesAddress` to be executed
      *
-     * @param targetMember the member to remove
+     * @param sharesAddress token address
+     * @param minimumSharesToPassAVote proposal can vote only if the sum of shares held by all voters exceed this number
+     * @param minutesForDebate the minimum amount of delay between when a proposal is made and when it can be executed
      */
-    function removeMember(address targetMember) onlyOwner {
-        require(memberId[targetMember] != 0);
-
-        for (uint i = memberId[targetMember]; i<members.length-1; i++){
-            members[i] = members[i+1];
-        }
-        delete members[members.length-1];
-        members.length--;
-    }
-
-    /**
-     * Edit existing members
-     *
-     * @param newMembers array of addresses to update
-     * @param canVote new voting value that all the values should be set to
-     */
-    function changeMembers(address[] newMembers, bool canVote) {
-        for (uint i = 0; i < newMembers.length; i++) {
-            if (canVote)
-                addMember(newMembers[i], '');
-            else
-                removeMember(newMembers[i]);
-        }
+    function changeVotingRules(Token sharesAddress, uint minimumSharesToPassAVote, uint minutesForDebate) onlyOwner public {
+        sharesTokenAddress = Token(sharesAddress);
+        if (minimumSharesToPassAVote == 0 ) minimumSharesToPassAVote = 1;
+        minimumQuorum = minimumSharesToPassAVote;
+        debatingPeriodInMinutes = minutesForDebate;
+        ChangeOfRules(minimumQuorum, debatingPeriodInMinutes, sharesTokenAddress);
     }
 
     /**
@@ -159,7 +120,7 @@ contract StokVel is owned, tokenRecipient {
         string jobDescription,
         bytes transactionBytecode
     )
-        onlyMembers
+        onlyShareholders public
         returns (uint proposalID)
     {
         proposalID = proposals.length++;
@@ -167,12 +128,13 @@ contract StokVel is owned, tokenRecipient {
         p.recipient = beneficiary;
         p.amount = weiAmount;
         p.description = jobDescription;
-        p.proposalHash = sha3(beneficiary, weiAmount, transactionBytecode);
+        p.proposalHash = keccak256(beneficiary, weiAmount, transactionBytecode);
+        p.minExecutionDate = now + debatingPeriodInMinutes * 1 minutes;
         p.executed = false;
-        p.creationDate = now;
+        p.proposalPassed = false;
+        p.numberOfVotes = 0;
         ProposalAdded(proposalID, beneficiary, weiAmount, jobDescription);
         numProposals = proposalID+1;
-        vote(proposalID, true, '');
 
         return proposalID;
     }
@@ -194,7 +156,7 @@ contract StokVel is owned, tokenRecipient {
         string jobDescription,
         bytes transactionBytecode
     )
-        onlyMembers
+        onlyShareholders public
         returns (uint proposalID)
     {
         return newProposal(beneficiary, etherAmount * 1 ether, jobDescription, transactionBytecode);
@@ -214,11 +176,11 @@ contract StokVel is owned, tokenRecipient {
         uint weiAmount,
         bytes transactionBytecode
     )
-        constant
+        constant public
         returns (bool codeChecksOut)
     {
         Proposal storage p = proposals[proposalNumber];
-        return p.proposalHash == sha3(beneficiary, weiAmount, transactionBytecode);
+        return p.proposalHash == keccak256(beneficiary, weiAmount, transactionBytecode);
     }
 
     /**
@@ -228,44 +190,23 @@ contract StokVel is owned, tokenRecipient {
      *
      * @param proposalNumber number of proposal
      * @param supportsProposal either in favor or against it
-     * @param justificationText optional justification text
      */
     function vote(
         uint proposalNumber,
-        bool supportsProposal,
-        string justificationText
+        bool supportsProposal
     )
-        onlyMembers
+        onlyShareholders public
+        returns (uint voteID)
     {
-        Proposal storage p = proposals[proposalNumber]; // Get the proposal
-        require(p.voted[msg.sender] != true);           // If has already voted, cancel
-        p.voted[msg.sender] = true;                     // Set this voter as having voted
-        if (supportsProposal) {                         // If they support the proposal
-            p.currentResult++;                          // Increase score
-        } else {                                        // If they don't
-            p.currentResult--;                          // Decrease the score
-        }
-
-        // Create a log of this event
-        Voted(proposalNumber,  supportsProposal, msg.sender, justificationText);
-
-        // If you can execute it now, do it
-        if ( now > proposalDeadline(proposalNumber)
-            && p.currentResult > 0
-            && p.proposalHash == sha3(p.recipient, p.amount, '')
-            && supportsProposal) {
-            executeProposal(proposalNumber, '');
-        }
-    }
-
-    function proposalDeadline(uint proposalNumber) constant returns(uint deadline) {
         Proposal storage p = proposals[proposalNumber];
-        uint factor = calculateFactor(uint(p.currentResult), (members.length - 1));
-        return p.creationDate + uint(factor * minimumTime *  1 minutes);
-    }
+        require(p.voted[msg.sender] != true);
 
-    function calculateFactor(uint a, uint b) constant returns (uint factor) {
-        return 2**(20 - (20 * a)/b);
+        voteID = p.votes.length++;
+        p.votes[voteID] = Vote({inSupport: supportsProposal, voter: msg.sender});
+        p.voted[msg.sender] = true;
+        p.numberOfVotes = voteID +1;
+        Voted(proposalNumber,  supportsProposal, msg.sender);
+        return voteID;
     }
 
     /**
@@ -276,19 +217,45 @@ contract StokVel is owned, tokenRecipient {
      * @param proposalNumber proposal number
      * @param transactionBytecode optional: if the transaction contained a bytecode, you need to send it
      */
-    function executeProposal(uint proposalNumber, bytes transactionBytecode) {
+    function executeProposal(uint proposalNumber, bytes transactionBytecode) public {
         Proposal storage p = proposals[proposalNumber];
 
-        require(now >= proposalDeadline(proposalNumber)                                         // If it is past the voting deadline
-            && p.currentResult > 0                                                              // and a minimum quorum has been reached
-            && !p.executed                                                                      // and it is not currently being executed
-            && checkProposalCode(proposalNumber, p.recipient, p.amount, transactionBytecode));  // and the supplied code matches the proposal...
+        require(now > p.minExecutionDate                                            
+            && !p.executed                                                          
+            && p.proposalHash == keccak256(p.recipient, p.amount, transactionBytecode)); 
 
 
-        p.executed = true;
-        assert(p.recipient.call.value(p.amount)(transactionBytecode));
+        // ...then tally the results
+        uint quorum = 0;
+        uint yea = 0;
+        uint nay = 0;
+
+        for (uint i = 0; i <  p.votes.length; ++i) {
+            Vote storage v = p.votes[i];
+            uint voteWeight = sharesTokenAddress.balanceOf(v.voter);
+            quorum += voteWeight;
+            if (v.inSupport) {
+                yea += voteWeight;
+            } else {
+                nay += voteWeight;
+            }
+        }
+
+        require(quorum >= minimumQuorum); // Check if a minimum quorum has been reached
+
+        if (yea > nay ) {
+            // Proposal passed; execute the transaction
+
+            p.executed = true;
+            require(p.recipient.call.value(p.amount)(transactionBytecode));
+
+            p.proposalPassed = true;
+        } else {
+            // Proposal failed
+            p.proposalPassed = false;
+        }
 
         // Fire Events
-        ProposalExecuted(proposalNumber, p.currentResult, proposalDeadline(proposalNumber));
+        ProposalTallied(proposalNumber, yea - nay, quorum, p.proposalPassed);
     }
 }

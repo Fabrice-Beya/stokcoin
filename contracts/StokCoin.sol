@@ -46,7 +46,7 @@ contract StokCoin {
      *
      * Initializes contract with initial supply tokens to the creator of the contract
      */
-    function TokenERC20(
+    function StokCoin(
         uint256 initialSupply,
         string tokenName,
         string tokenSymbol

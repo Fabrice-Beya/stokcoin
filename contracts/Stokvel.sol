@@ -40,7 +40,7 @@ contract Token {
 /**
  * The shareholder association contract itself
  */
-contract Association is owned, tokenRecipient {
+contract StokVel is owned, tokenRecipient {
 
     uint public minimumQuorum;
     uint public debatingPeriodInMinutes;
@@ -82,7 +82,7 @@ contract Association is owned, tokenRecipient {
      *
      * First time setup
      */
-    function Association(Token sharesAddress, uint minimumSharesToPassAVote, uint minutesForDebate) payable public {
+    function StokVel(Token sharesAddress, uint minimumSharesToPassAVote, uint minutesForDebate) payable public {
         changeVotingRules(sharesAddress, minimumSharesToPassAVote, minutesForDebate);
     }
 

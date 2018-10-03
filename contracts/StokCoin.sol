@@ -4,23 +4,30 @@ pragma solidity ^0.4.18;
 contract owned {
     address public owner;
 
+// Assigns the owner address to the fist sender of a message
+// to the contract this will be the address of the person 
+// deplying the contract
     function owned() public {
         owner = msg.sender;
     }
 
+// This is a function that checks if the address of the sender 
+// to the smart contract is that of the owner. If it is not an 
+// exception is raised to halt the smart contrat execution.
     modifier onlyOwner {
         require(msg.sender == owner);
         _;
     }
-
+// This function transfer ownership by the current owner to another 
+// address which will be the owner. 
     function transferOwnership(address newOwner) onlyOwner public {
         owner = newOwner;
     }
 }
 
-interface tokenRecipient { function receiveApproval(address _from, uint256 _value, address _token, bytes _extraData) external; }
+interface tokenRecipient {function receiveApproval(address _from, uint256 _value, address _token, bytes _extraData) external; }
 
-contract StokCoin {
+contract StokCoin is owned{
 	// Public variables of the token
     string public name;
     string public symbol;
@@ -46,15 +53,19 @@ contract StokCoin {
      *
      * Initializes contract with initial supply tokens to the creator of the contract
      */
-    function StokCoin(
+    constructor (
         uint256 initialSupply,
         string tokenName,
         string tokenSymbol
     ) public {
-        totalSupply = initialSupply * 10 ** uint256(decimals);  // Update total supply with the decimal amount
-        balanceOf[msg.sender] = totalSupply;                // Give the creator all initial tokens
-        name = tokenName;                                   // Set the name for display purposes
-        symbol = tokenSymbol;                               // Set the symbol for display purposes
+        // Update total supply with the decimal amount
+        totalSupply = initialSupply * 10 ** uint256(decimals);  
+        // Give the creator all initial tokens
+        balanceOf[msg.sender] = totalSupply;  
+        // Set the name for display purposes                  
+        name = tokenName;  
+        // Set the symbol for display purposes                
+        symbol = tokenSymbol;                                   
     }
 
     /**
